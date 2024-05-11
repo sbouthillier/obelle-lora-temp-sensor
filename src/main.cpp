@@ -6,6 +6,10 @@
 #include <pb_decode.h>
 #include "lora_payload.pb.h"
 
+
+#define uS_TO_S_FACTOR 1000000      /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  15 * 60      /* Time ESP32 will go to sleep (in seconds) */
+
 //----------------------------------------------------------------
 // LoRa
 //----------------------------------------------------------------
@@ -48,9 +52,6 @@ OneWire oneWire(oneWireBus);
 DallasTemperature sensors(&oneWire);
 DeviceAddress sensorAddr;
 
-unsigned long previousMillis = 0;   // Stores last time temperature was published
-const long interval = 10000;        // Interval at which to publish sensor readings
-
 //----------------------------------------------------------------
 // Type definitions
 //----------------------------------------------------------------
@@ -59,8 +60,8 @@ const long interval = 10000;        // Interval at which to publish sensor readi
 //----------------------------------------------------------------
 // Private data
 //----------------------------------------------------------------
-static uint32_t packetCounter = 0;
-static bool     packet_transmitted;
+RTC_DATA_ATTR uint32_t packetCounter = 0;
+static        bool     packet_transmitted;
 
 //----------------------------------------------------------------
 // Private functions
@@ -70,7 +71,6 @@ static void vExtOff(void);
 
 void OnTxDone(void);
 void OnTxTimeout(void);
-
 
 
 void setup() {
@@ -104,53 +104,51 @@ void setup() {
                       3000);                            // timeout
 
     Serial.println();
+
+    pb_ostream_t ostream;
+    LoraPayload payload = LoraPayload_init_zero;
+
+    ++packetCounter;
+    payload.id = packetCounter;
+
+    // New temperature readings
+    vExtOn();
+    sensors.requestTemperaturesByAddress(sensorAddr); 
+    // Temperature in Celsius degrees
+    float temp = sensors.getTempC(sensorAddr);
+    vExtOff();
+
+    payload.temperature = temp;
+    ostream = pb_ostream_from_buffer(txpacket, sizeof(txpacket));
+
+    if(!pb_encode(&ostream, &LoraPayload_msg, &payload)) {
+        Serial.printf("Encoding failed: %s\n", PB_GET_ERROR(&ostream));
+    }
+    else {
+        packet_transmitted = false;
+
+        // Send the same packet 3 times
+        for(int i = 0; i < 3; i++) {
+            Radio.Send(txpacket, ostream.bytes_written);
+            packet_transmitted = false;
+
+            while(packet_transmitted == false) {
+                Radio.IrqProcess();
+            }
+            delay(100);
+        }
+
+        Serial.printf("Température %.2f", temp);
+        Serial.println();
+    }
+
+    esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+    Serial.flush(); 
+    Radio.Sleep( );
+    esp_deep_sleep_start();
 }
 
 void loop() {
-    unsigned long currentMillis = millis();
-    // Every X number of seconds (interval = 10 seconds) 
-    // it publishes a new MQTT message
-    if (currentMillis - previousMillis >= interval) 
-    {
-        // Save the last time a new reading was published
-        previousMillis = currentMillis;
-    
-        pb_ostream_t ostream;
-        LoraPayload payload = LoraPayload_init_zero;
-
-        ++packetCounter;
-        payload.id = packetCounter;
-
-        // New temperature readings
-        vExtOn();
-        sensors.requestTemperaturesByAddress(sensorAddr); 
-        // Temperature in Celsius degrees
-        float temp = sensors.getTempC(sensorAddr);
-        vExtOff();
-
-        payload.temperature = temp;
-        ostream = pb_ostream_from_buffer(txpacket, sizeof(txpacket));
-
-        if(!pb_encode(&ostream, &LoraPayload_msg, &payload)) {
-            Serial.printf("Encoding failed: %s\n", PB_GET_ERROR(&ostream));
-        }
-        else {
-            packet_transmitted = false;
-
-            // Send the same packet 3 times
-            for(int i = 0; i < 3; i++) {
-                Radio.Send(txpacket, ostream.bytes_written);
-                packet_transmitted = false;
-
-                while(packet_transmitted == false) {
-                    Radio.IrqProcess();
-                }
-            }
-
-            Serial.printf("Température %.2f", temp);
-            Serial.println();
-        }
-    }
 }
 
 static void vExtOn(void) {
@@ -169,6 +167,5 @@ void OnTxDone(void) {
 
 void OnTxTimeout(void) {
     packet_transmitted = true;
-    Radio.Sleep( );
     Serial.println("TX Timeout......");
 }
