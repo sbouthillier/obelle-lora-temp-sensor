@@ -1,6 +1,9 @@
 syntax = "proto2";
 
 message LoraPayload {
-  required uint32 id = 1;
-  required float  temperature = 2;
+  required uint32 id         = 1;
+  required uint32 distance   = 2;
+  required uint32 level      = 3;
+  required uint32 err_sensor = 4;
+  required uint32 err_lora   = 5;
 }

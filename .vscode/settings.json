@@ -1,0 +1,9 @@
+{
+    "sonarlint.pathToCompileCommands": "${workspaceFolder}/compile_commands.json",
+    "files.associations": {
+        "array": "cpp",
+        "istream": "cpp",
+        "ostream": "cpp"
+    },
+    "DockerRun.DisableAutoGenerateConfig": true
+}
